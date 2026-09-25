@@ -1609,6 +1609,13 @@ static bool gtk3(Display* const display, const WebViewInitOptions& options, WebV
 
     d_stdout("WebView gtk3 main loop quit");
 
+    // GROG: same as the Qt path -- this throwaway child cannot be torn down
+    // cleanly via main()/exit() without risking a crash in global destructors
+    // and a slow teardown that stalls the parent's ChildProcess::stop() for its
+    // full 2s timeout. The parent unlinks the shared memory and the OS reclaims
+    // everything else on exit, so terminate now, skipping teardown.
+    _exit(0);
+
    #ifndef WEB_VIEW_INCLUDE_GTK3_EXPLICITLY
     dlclose(lib);
    #endif
@@ -1838,7 +1845,7 @@ protected:
 
             // show context menu "soon"
             // if timer is too quick, createStandardContextMenu() will refer to old objects
-            if (_timerId == -1)
+            /*if (_timerId == -1)
             {
                #ifdef WEB_VIEW_INCLUDE_QTx_EXPLICITLY
                 _menuPos = static_cast<QContextMenuEvent*>(event)->globalPos();
@@ -1848,7 +1855,7 @@ protected:
                 _timerId = QObject_startTimer(this, 10, Qt::CoarseTimer);
             }
 
-            return true;
+            return true;*/
         }
 
         // HACK forcing webview window position to update, needed for drop area
@@ -2600,6 +2607,15 @@ static bool qtwebengine(const int qtVersion,
 
     d_stdout("WebView Qt%d main loop quit", qtVersion);
 
+    // GROG: QtWebEngine cannot be torn down cleanly in this dlopen'd child.
+    // Returning through main()/exit() runs Qt's global static destructors
+    // (QThreadDataDestroyer -> ~QXcbGlibEventDispatcher) which SIGSEGV, and the
+    // slow Chromium teardown makes the parent's ChildProcess::stop() block for
+    // its full 2s timeout before SIGKILL. This is a throwaway process: the
+    // parent unlinks the shared memory and the OS reclaims everything else on
+    // exit, so terminate now, skipping both the crash and the slow teardown.
+    _exit(0);
+
    #ifndef WEB_VIEW_INCLUDE_QTx_EXPLICITLY
     dlclose(lib);
    #endif
@@ -2702,6 +2718,12 @@ int dpf_webview_start(const int argc, char* argv[])
                 options.initialJS = static_cast<char*>(std::malloc(initjslen));
                 rbctrl.readCustomData(options.initialJS, initjslen);
             }
+
+            // GROG: the init payload is a single message. Without this break the
+            // loop iterates once more and blocks for the full 1s webview_timedwait
+            // timeout waiting for a message that never comes -- ~1s of dead time
+            // on every UI open, before Qt is even loaded.
+            break;
         }
     }
 
